@@ -3,12 +3,11 @@
 package gl
 
 import (
-	"fmt"
+	"github.com/go-gl/gl/v4.1-core/gl"
+	"github.com/go-gl/mathgl/mgl64"
+	glu "github.com/maxfish/gl_utils/gl_utils"
 	"image"
 	"image/draw"
-	"strings"
-
-	"github.com/go-gl/gl/v3.2-core/gl"
 
 	"fyne.io/fyne"
 	"fyne.io/fyne/theme"
@@ -20,15 +19,16 @@ type Buffer uint32
 // Program represents a compiled GL program
 type Program uint32
 
-// Texture represents an uploaded GL texture
+var shader glu.ShaderProgram
+var quad *glu.Primitive2D
+var camera *glu.Camera2D
+
 type Texture uint32
 
-// NoTexture is the zero value for a Texture
 var NoTexture = Texture(0)
 
 func newTexture() Texture {
 	var texture uint32
-
 	gl.GenTextures(1, &texture)
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, texture)
@@ -41,8 +41,11 @@ func newTexture() Texture {
 }
 
 func (p *glPainter) imgToTexture(img image.Image) Texture {
+
 	switch i := img.(type) {
 	case *image.Uniform:
+		// TODO: Color!
+		//t, _ := gl_utils.NewEmptyTexture(1,1, gl.RGBA)
 		texture := newTexture()
 		r, g, b, a := i.RGBA()
 		r8, g8, b8, a8 := uint8(r>>8), uint8(g>>8), uint8(b>>8), uint8(a>>8)
@@ -54,7 +57,7 @@ func (p *glPainter) imgToTexture(img image.Image) Texture {
 		if len(i.Pix) == 0 { // image is empty
 			return 0
 		}
-
+		//t, _ := gl_utils.NewEmptyTexture(i.Rect.Size().X, i.Rect.Size().Y, gl.RGBA)
 		texture := newTexture()
 		gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, int32(i.Rect.Size().X), int32(i.Rect.Size().Y),
 			0, gl.RGBA, gl.UNSIGNED_BYTE, gl.Ptr(i.Pix))
@@ -68,6 +71,8 @@ func (p *glPainter) imgToTexture(img image.Image) Texture {
 
 func (p *glPainter) SetOutputSize(width, height int) {
 	gl.Viewport(0, 0, int32(width), int32(height))
+	camera = glu.NewCamera2D(width, height, 1)
+	//camera.SetCentered(true)
 }
 
 func (p *glPainter) freeTexture(obj fyne.CanvasObject) {
@@ -90,71 +95,8 @@ func glInit() {
 	gl.Enable(gl.BLEND)
 }
 
-func compileShader(source string, shaderType uint32) (uint32, error) {
-	shader := gl.CreateShader(shaderType)
-
-	csources, free := gl.Strs(source)
-	gl.ShaderSource(shader, 1, csources, nil)
-	free()
-	gl.CompileShader(shader)
-
-	var status int32
-	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
-	if status == gl.FALSE {
-		var logLength int32
-		gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, &logLength)
-
-		info := strings.Repeat("\x00", int(logLength+1))
-		gl.GetShaderInfoLog(shader, logLength, nil, gl.Str(info))
-
-		return 0, fmt.Errorf("failed to compile %v: %v", source, info)
-	}
-
-	return shader, nil
-}
-
-const (
-	vertexShaderSource = `
-    #version 110
-    attribute vec3 vert;
-    attribute vec2 vertTexCoord;
-    varying vec2 fragTexCoord;
-
-    void main() {
-        fragTexCoord = vertTexCoord;
-
-        gl_Position = vec4(vert, 1);
-    }
-` + "\x00"
-
-	fragmentShaderSource = `
-    #version 110
-    uniform sampler2D tex;
-
-    varying vec2 fragTexCoord;
-
-    void main() {
-        gl_FragColor = texture2D(tex, fragTexCoord);
-    }
-` + "\x00"
-)
-
 func (p *glPainter) Init() {
-	vertexShader, err := compileShader(vertexShaderSource, gl.VERTEX_SHADER)
-	if err != nil {
-		panic(err)
-	}
-	fragmentShader, err := compileShader(fragmentShaderSource, gl.FRAGMENT_SHADER)
-	if err != nil {
-		panic(err)
-	}
-
-	prog := gl.CreateProgram()
-	gl.AttachShader(prog, vertexShader)
-	gl.AttachShader(prog, fragmentShader)
-	gl.LinkProgram(prog)
-
-	p.program = Program(prog)
+	quad = glu.NewQuadPrimitive(mgl64.Vec3{0, 0, 0}, mgl64.Vec2{1, 1})
 }
 
 func (p *glPainter) glClearBuffer() {
@@ -175,27 +117,37 @@ func (p *glPainter) glScissorClose() {
 	gl.Disable(gl.SCISSOR_TEST)
 }
 
+var position mgl64.Vec3
+var size mgl64.Vec2
 func (p *glPainter) glCreateBuffer(points []float32) Buffer {
-	var vbo uint32
-	gl.GenBuffers(1, &vbo)
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(points), gl.Ptr(points), gl.STATIC_DRAW)
+	// The coordinates are now based on the camera and the transformations need to be reversed
 
-	vertAttrib := uint32(gl.GetAttribLocation(uint32(p.program), gl.Str("vert\x00")))
-	gl.EnableVertexAttribArray(vertAttrib)
-	gl.VertexAttribPointer(vertAttrib, 3, gl.FLOAT, false, 5*4, gl.PtrOffset(0))
+	//size, pos, frame, fill, aspect, pad)
+	//	return []float32{
+	//		// coord x, y, z texture x, y
+	//		x1, y2, 0, 0.0, 1.0, // top left
+	//		x1, y1, 0, 0.0, 0.0, // bottom left
+	//		x2, y2, 0, 1.0, 1.0, // top right
+	//		x2, y1, 0, 1.0, 0.0, // bottom right
+	//	}
+	// Solutions
+	// pos.X = ((x1 + 1) / 2) * frame.Width + pad
+	// pos.Y = (1-y1)*frame.Height/2 + pad
+	// width = (x2 + 1)*frame.Width/2 -pad - pos.X
+	// height = (1-y2)*frame.Height/2 - pos.Y - pad
 
-	texCoordAttrib := uint32(gl.GetAttribLocation(uint32(p.program), gl.Str("vertTexCoord\x00")))
-	gl.EnableVertexAttribArray(texCoordAttrib)
-	gl.VertexAttribPointer(texCoordAttrib, 2, gl.FLOAT, false, 5*4, gl.PtrOffset(3*4))
+	posX := float64(points[0]+1)*camera.Width()/2 + 0
+	posY := float64(1-points[6])*camera.Height()/2 + 0
+	position = mgl64.Vec3{posX, posY, 0}
+	sizeW := float64(points[10] + 1)*camera.Width()/2 - 0 - posX
+	sizeH := float64(1-points[1])*camera.Height()/2 - 0 - posY
+	size = mgl64.Vec2{sizeW, sizeH}
 
-	return Buffer(vbo)
+	return 0
 }
 
 func (p *glPainter) glFreeBuffer(vbo Buffer) {
-	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
-	buf := uint32(vbo)
-	gl.DeleteBuffers(1, &buf)
+	// Nothing to do here, the buffer is reused
 }
 
 func (p *glPainter) glDrawTexture(texture Texture, alpha float32) {
@@ -210,8 +162,9 @@ func (p *glPainter) glDrawTexture(texture Texture, alpha float32) {
 
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, uint32(texture))
-
-	gl.DrawArrays(gl.TRIANGLE_STRIP, 0, 4)
+	quad.SetPosition(position)
+	quad.SetScale(size)
+	quad.Draw(camera.ProjectionMatrix32())
 }
 
 func (p *glPainter) glCapture(width, height int32, pixels *[]uint8) {

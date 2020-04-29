@@ -9,9 +9,11 @@ require (
 	github.com/fyne-io/mobile v0.0.1
 	github.com/go-gl/gl v0.0.0-20190320180904-bf2b1f2f34d7
 	github.com/go-gl/glfw v0.0.0-20181213070059-819e8ce5125f
+	github.com/go-gl/mathgl v0.0.0-20190713194549-592312d8590a
 	github.com/goki/freetype v0.0.0-20181231101311-fa8a33aabaff
 	github.com/jackmordaunt/icns v0.0.0-20181231085925-4f16af745526
 	github.com/josephspurrier/goversioninfo v0.0.0-20190124120936-8611f5a5ff3f
+	github.com/maxfish/gl_utils v0.0.0-20200429193558-c0715039c72d
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/pkg/errors v0.8.1
 	github.com/srwiley/oksvg v0.0.0-20200311192757-870daf9aa564
